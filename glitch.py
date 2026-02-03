@@ -3,35 +3,75 @@ import zlib
 import sys
 import subprocess
 import random
+import argparse
+import math
+
+def parseIDATData(png):
+
+    chunkType = None
+    IDATData = bytearray()
+
+    while chunkType != b'IEND':
+        chunkLength, chunkType = struct.unpack(">I4s", png.read(8))
+
+        # I think simply logging the quantity of each chunk found would be faster, particularly when a single idat chunk exists per scanline
+        print(f"Chunk found: {chunkType}")
+        if chunkType == b'IDAT':
+            IDATChunkStart = png.tell() - 8
+            data = png.read(chunkLength)
+            IDATData.extend(data)
+            dataCRC, = struct.unpack(">I", png.read(4))
+
+            print(f"Expected CRC {zlib.crc32(chunkType + data)} | Actual CRC {dataCRC}")
+
+            remainingData = png.read()
+            png.seek(IDATChunkStart)
+            png.truncate()
+            png.write(remainingData)
+            png.seek(IDATChunkStart)
+        else:
+            print(f"Chunk length: {chunkLength}")
+            print(f"Chunk contents: {png.read(chunkLength)}")
+            print(f"Skipping chunk...")
+            png.seek(4, 1)        # + 4 to skip the chunk CRC as well, 1 defines seek from current position
+
+    decompressedData = bytearray(zlib.decompress(IDATData))
+
+    return decompressedData, IDATChunkStart
+
 
 def checkArgs():
-    pngPath = sys.argv[1] if len(sys.argv) > 1 else -1
-    requestedFilter = int(sys.argv[2]) if len(sys.argv) > 2 else -1
-    forceffmpeg = sys.argv[3].lower() if len(sys.argv) > 3 else -1
-    ffmpegout = sys.argv[4] if len(sys.argv) > 4 else 'files/ffmpegoutput.png'
+    parser = argparse.ArgumentParser(prog="png-glitch", description="Simple-ish tool to corrupt and mess with png files.")
 
-    if pngPath == -1:
+    parser.add_argument('filename')
+    parser.add_argument('-f', '--filter', type=int)
+    parser.add_argument('-r', '--redraw', type=int)
+    parser.add_argument('--ffmpeg', action='store_true')
+
+    args = parser.parse_args()
+
+    if args.filename == None:
         raise ValueError('A path to the PNG file must be specified')
 
-    if requestedFilter not in [0, 1, 2, 3, 4]:
+    if args.filter not in [0, 1, 2, 3, 4]:
         raise ValueError("A filter type from 0-4 must be specified.")
     
-    if forceffmpeg == "force":
+    if args.ffmpeg:
         subprocess.run(
             [
                 "ffmpeg",
                 "-loglevel", "panic",
                 "-y",                 # overwrite output
-                "-i", pngPath,
-                "-pred", str(requestedFilter),
-                ffmpegout
+                "-i", args.filename,
+                "-pred", str(args.filter),
+                "files/ffmpegout.png"
             ],
             check=True
         )
-        print(f"File written to '{ffmpegout}' with requested FFmpeg filters")
+        print(f"File written to 'files/ffmpegout.png' with requested FFmpeg filters")
         exit(0)
     
-    return (pngPath, requestedFilter)
+    return (args.filename, args.filter, args.redraw)
 
 def rewriteColorType(png):
     print('Rewriting color type to standard RGB')
@@ -42,6 +82,18 @@ def rewriteColorType(png):
     print(f'Rewriting IHDR CRC')
     newIHDRCrc = zlib.crc32(b'IHDR' + currentData)
     png.write(newIHDRCrc.to_bytes(4))
+
+def rewriteImageWidth(png, width):
+    pos = png.tell()
+    print('Rewriting image width')
+    png.seek(16)
+    png.write(width.to_bytes(4))
+    png.seek(16)
+    currentData = png.read(13)
+    print(f'Rewriting IHDR CRC')
+    newIHDRCrc = zlib.crc32(b'IHDR' + currentData)
+    png.write(newIHDRCrc.to_bytes(4))
+    png.seek(pos)
 
 def checkHeader(png):
     print('Reading header')
@@ -75,7 +127,7 @@ def checkIHDR(png):
     if IHDRcrc != expectedCRC:
         raise ValueError("The expected CRC for the IHDR chunk does not match the CRC present on the file.")
 
-    if bitDepth != 8:
+    if bitDepth < 8:
         raise ValueError("Bit depths smaller than 8 are not supported at the moment")
 
     if colorType == 3:
@@ -86,81 +138,72 @@ def checkIHDR(png):
 
     return (width, height, bitDepth, colorType, compression, filter, interlace)
 
-pngPath, requestedFilter = checkArgs()
+pngPath, requestedFilter, redraw = checkArgs()
+
+dictBytesPerPixel = {
+    (0, 8): 1,
+    (2, 8): 3,
+    (3, 8): 1,
+    (4, 8): 2,
+    (6, 8): 4,
+    (0, 16): 2,
+    (2, 16): 6,
+    (3, 16): 2,
+    (4, 16): 4,
+    (6, 16): 8
+}
+
+dictFilter = {
+    0: "None",
+    1: "Sub",
+    2: "Up",
+    3: "Average",
+    4: "Paeth"
+}
 
 with open(pngPath, "r+b") as png:
-
     checkHeader(png)        # read the first 8 bytes of the png file, expected as b"\x89PNG\r\n\x1a\n"
     width, height, bitDepth, colorType, compression, filter, interlace = checkIHDR(png)
 
-    dictPerPixel = {
-        0: 1,
-        2: 3,
-        3: 1,
-        4: 2,
-        6: 4
-    }
+    bytesPerPixel = dictBytesPerPixel[(colorType, bitDepth)]
+    scanlineSize = (width * bytesPerPixel + 1) + (redraw if redraw != None else 0) 
+    print(f"Defined size of each scan line {scanlineSize}")
+    # If an offset is set, some cool effects can be generated. the offset must then be set back to 0 in order to display the png file
+    # this offset can be more easily be implemented by simply messing with the height/width in IHDR
+    # the weirder effects were due to how rgbScanlines were calculated
+    # I think that using some bitwise operations could have the same effect
 
-    dictFilter = {
-        0: "None",
-        1: "Sub",
-        2: "Up",
-        3: "Average",
-        4: "Paeth"
-    }
+    decompressedData, IDATChunkStart = parseIDATData(png)
+    expectedDataSize = (width * bytesPerPixel + 1) * height
 
-    bytesPerPixel = dictPerPixel[colorType]
-    scanlineSize = (width * bytesPerPixel + 1) # + 255 # when converting from colorType 6, if an offset is set, some cool effects can be generated. the offset must then be set back to 0 in order to display the png file
-    IDATs = bytearray()
+    print(f"{float(scanlineSize - 1)} | {(len(decompressedData) - height) / height}")
+
+    if float(scanlineSize - 1) != (len(decompressedData) - height) / height:
+        newWidth = math.ceil((scanlineSize - 1) / bytesPerPixel)
+        print(f"A width of {newWidth} px for the image would be recommended")
+        rewriteImageWidth(png, newWidth)
+
     scanlines = []                                  # IDAT chunks will be decompressed and each scanline appended to this list
-    print(f"Expected size of each scan line {scanlineSize}")
 
-    chunkType = None
+    for i in range(0, len(decompressedData), width * bytesPerPixel + 1):
+        scanlines.append(decompressedData[i:i + width * bytesPerPixel + 1])
 
-    while chunkType != b'IEND':
-        chunkLength, chunkType = struct.unpack(">I4s", png.read(8))
-        print(f"Chunk found: {chunkType}")
-        if chunkType == b'IDAT':
-            IDATChunkStart = png.tell() - 8
-            data = png.read(chunkLength)
-            IDATs.extend(data)
-            dataCRC, = struct.unpack(">I", png.read(4))
-            print(f"Expected CRC {zlib.crc32(chunkType + data)} | Actual CRC {dataCRC}")
-
-            remainingData = png.read()
-            png.seek(IDATChunkStart)
-            png.truncate()
-            png.write(remainingData)
-            png.seek(IDATChunkStart)
-        else:
-            print(f"Chunk length: {chunkLength}")
-            print(f"Chunk contents: {png.read(chunkLength)}")
-            print(f"Skipping chunk...")
-            png.seek(4, 1)        # + 4 to skip the chunk CRC as well, 1 defines seek from current position
-
-
-    expectedDataSize = scanlineSize * height
-    decompressedData = bytearray(zlib.decompress(IDATs))
-    print(f"Expected size of decompressed data {expectedDataSize} | Actual size of decompressed data {len(decompressedData)}")
-
-    for i in range(0, len(decompressedData), scanlineSize):
-        scanlines.append(decompressedData[i:i + scanlineSize])
-
-    rgbScanlines = bytearray()
+    rgbScanlines = []
 
     for scanline in scanlines:
-        z = 0
         if colorType == 6:
+            
             rgbScanline = bytearray()
             for j in range(1, len(scanline), 4):
+                # implement bitwise operation logic here
                 rgbScanline.extend(scanline[j:j+3])
             rgbScanline.insert(0, requestedFilter)
-            rgbScanlines.extend(rgbScanline)
+            rgbScanlines.append(rgbScanline)
         else:
             scanline[0] = requestedFilter
 
     if colorType == 6:
-        modifiedData = rgbScanlines
+        modifiedData = b''.join(rgbScanlines)
     else:
         modifiedData = b''.join(scanlines)
 
@@ -178,4 +221,4 @@ with open(pngPath, "r+b") as png:
     png.write(recompressedData)
     png.write(recalculatedCRC.to_bytes(4))
     png.write(tempRemovedData)
-    print('Success')
+    print(f'Glitched: "{pngPath}" successfully')
