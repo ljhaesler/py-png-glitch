@@ -1,9 +1,14 @@
-#   
-#   
-#   
-#   
-#   
-
+#   So far I have found a few different parameters that drastically change the form of the final JPEG
+#   1. The filters that the png was originally compressed with
+#       ->  This can be controlled with ffmpeg via --pred, ensuring that each scanline is give the same filter type
+#       ->  Otherwise, the base compression of the file, which can be somewhat controlled via something like pngcrush, but fundamentally is left to the whim of the encoder
+#   2. Whether or not the colortype was modified before conversion to RGB or not.
+#       ->  If the colortype of a type 6 png is set to 0, 2, or 4 before -c is called, a unique color-banding effect can be achieved. Each type creates it's own distinct effect.
+#       ->  Otherwise, a standard conversion to type 2 will occur.
+#   3. During this moment, before conversion and after modifying the colortype, any bitwise corruptions/modifications will impact the output post-conversion.
+#       ->  xor, and, or will each modify data permanently and the exact form before the operation is pretty much impossible to return to.
+#       ->  this permanently modified data necessarily impacts the conversion process, and creates unique/distinct effects.
+#   4. Finally, bitwise corruptions to the converted file are permanent, and each operation creates a unique/random effect on the final image.
 
 
 import struct
@@ -238,7 +243,7 @@ with open(pngPath, "r+b") as png:
 
     scanlines = []                                  # IDAT chunks will be decompressed and each scanline appended to this list
     
-    if colortype:
+    if colortype != None:
         rewriteColorType(png, colortype)
 
     bytesPerPixel = dictBytesPerPixel[(colorType, bitDepth)]
