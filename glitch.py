@@ -10,6 +10,8 @@
 #       ->  this permanently modified data necessarily impacts the conversion process, and creates unique/distinct effects.
 #   4. Finally, bitwise corruptions to the converted file are permanent, and each operation creates a unique/random effect on the final image.
 
+# Changing the colortype after setting a particular filter will also modify the data in unpredictable ways
+
 
 import struct
 import zlib
@@ -40,7 +42,6 @@ def finalizeCorruption(scanlines):
     recompressedData = zlib.compress(modifiedData)
     recalculatedLength = len(recompressedData).to_bytes(4)
     recalculatedCRC = zlib.crc32(b'IDAT' + recompressedData)
-    print(f"Wrote {dictFilter[requestedFilter]} filter to {height} scanlines")
 
     png.seek(IDATChunkStart)
     tempRemovedData = png.read()
@@ -54,7 +55,9 @@ def finalizeCorruption(scanlines):
 
 def addFilters(scanlines):
     for scanline in scanlines:
-        scanline[0] = requestedFilter
+        scanline.insert(0, requestedFilter)
+    print(f"Scanlines of length {len(scanlines[0])}")
+    print(f"Wrote {dictFilter[requestedFilter]} filter to {height} scanlines")
     return scanlines
 
 def bitwiseCorruption(scanlines, operator):
@@ -71,13 +74,24 @@ def bitwiseCorruption(scanlines, operator):
 
     return scanlines
 
-def convertFromRGBA(scanlines):
+def convertToRGBA(scanlines):
+    # converts type 2 to type 6
+    rgbaScanlines = []
+    for scanline in scanlines:
+        rgbaScanline = bytearray()
+        for byte in range(0, len(scanline), 3):
+            rgbaScanline.extend(scanline[byte:byte+3])
+            rgbaScanline.append(0x00)
+        rgbaScanlines.append(rgbaScanline)
+    return rgbaScanlines
+
+def convertToRGB(scanlines):
+    # converts type 6 to type 2
     rgbScanlines = []
     for scanline in scanlines:
         rgbScanline = bytearray()
-        for byte in range(1, len(scanline), 4):
+        for byte in range(0, len(scanline), 4):
             rgbScanline.extend(scanline[byte:byte+3])
-        rgbScanline.insert(0, 0x00)
         rgbScanlines.append(rgbScanline)
     return rgbScanlines
 
@@ -85,19 +99,19 @@ def parseIDATData(png):
 
     chunkType = None
     IDATData = bytearray()
+    IDATQuantity = 0
 
     while chunkType != b'IEND':
         chunkLength, chunkType = struct.unpack(">I4s", png.read(8))
 
         # I think simply logging the quantity of each chunk found would be faster, particularly when a single idat chunk exists per scanline
-        print(f"Chunk found: {chunkType}")
         if chunkType == b'IDAT':
+            IDATQuantity += 1
             IDATChunkStart = png.tell() - 8
             data = png.read(chunkLength)
             IDATData.extend(data)
-            dataCRC, = struct.unpack(">I", png.read(4))
+            png.read(4) # read past the CRC value
 
-            print(f"Expected CRC {zlib.crc32(chunkType + data)} | Actual CRC {dataCRC}")
 
             remainingData = png.read()
             png.seek(IDATChunkStart)
@@ -110,6 +124,7 @@ def parseIDATData(png):
             print(f"Skipping chunk...")
             png.seek(4, 1)        # + 4 to skip the chunk CRC as well, 1 defines seek from current position
 
+    print(f"A total of {IDATQuantity} IDAT chunks were found and concatenated.")
     decompressedData = bytearray(zlib.decompress(IDATData))
 
     return decompressedData, IDATChunkStart
@@ -123,7 +138,7 @@ def checkArgs():
     parser.add_argument('-r', '--redraw', type=int)
     parser.add_argument('--ffmpeg', action='store_true')
     parser.add_argument('-b', '--bitwise', type=str)
-    parser.add_argument('-c', '--convert', action='store_true')
+    parser.add_argument('-c', '--convert', type=int)
     parser.add_argument('--colortype', type=int)
 
     args = parser.parse_args()
@@ -151,10 +166,10 @@ def checkArgs():
     
     return (args.filename, args.filter, args.redraw, args.bitwise, args.convert, args.colortype)
 
-def rewriteColorType(png, colortype):
-    print('Rewriting color type to standard RGB')
+def rewriteColorType(png, setColorType):
+    print('Rewriting color type')
     png.seek(25)
-    png.write(colortype.to_bytes(1))
+    png.write(setColorType.to_bytes(1))
     png.seek(16)
     currentData = png.read(13)
     print(f'Rewriting IHDR CRC')
@@ -191,13 +206,6 @@ def checkIHDR(png):
 
     width, height, bitDepth, colorType, compression, filter, interlace = struct.unpack(">IIBBBBB", IHDRData)
 
-    print(f"{f"Image Width":<30} : {width}")
-    print(f"{f"Image Height":<30} : {height}")
-    print(f"{f"Bit Depth":<30} : {bitDepth}")
-    print(f"{f"Color Type":<30} : {colorType}")
-    print(f"{f"Compression":<30} : {compression}")
-    print(f"{f"Filter Method":<30} : {filter}")
-    print(f"{f"Interlace Method":<30} : {interlace}")
     IHDRcrc, = struct.unpack(">I", png.read(4))
     expectedCRC = zlib.crc32(IHDRType + IHDRData)
     print(f"Expected CRC {expectedCRC} | Actual CRC {IHDRcrc}")
@@ -207,14 +215,41 @@ def checkIHDR(png):
 
     if bitDepth < 8:
         raise ValueError("Bit depths smaller than 8 are not supported at the moment")
-    
-    if colorType == 3:
-        raise ValueError("Indexed color unsupported at the moment")
+
 
 
     return (width, height, bitDepth, colorType, compression, filter, interlace)
 
-pngPath, requestedFilter, redraw, bitwise, convert, colortype = checkArgs()
+def printIHDRData():
+    print(f"{f"Image Width":<30} : {width}")
+    print(f"{f"Image Height":<30} : {height}")
+    print(f"{f"Bit Depth":<30} : {bitDepth}")
+    print(f"{f"Color Type":<30} : {colorType}")
+    print(f"{f"Compression":<30} : {compression}")
+    print(f"{f"Filter Method":<30} : {filter}")
+    print(f"{f"Interlace Method":<30} : {interlace}")
+
+def extractScanlines(decompressedData):
+    scanlines = []
+    totalBytes = len(decompressedData)
+    if convert == None:
+        bytesPerScanline = totalBytes / height
+    else:
+        bytesPerScanline = dictBytesPerPixel[(convert, bitDepth)] * width + 1
+    bytesPerPixel = (bytesPerScanline - 1 ) / width
+
+    print(f"total bytes: {totalBytes} | bpsl: {bytesPerScanline} | bpp: {bytesPerPixel}")
+
+    for i in range(0, totalBytes, int(bytesPerScanline)):
+        # should remove all filter bytes from the scanlines
+        scanline = decompressedData[i:i + int(bytesPerScanline)]
+        del scanline[0]
+        
+        scanlines.append(scanline)
+    print(f"Scanlines of length {len(scanlines[0])}")
+    return scanlines
+
+pngPath, requestedFilter, redraw, bitwise, convert, setColorType = checkArgs()
 
 dictBytesPerPixel = {
     (0, 8): 1,
@@ -239,36 +274,19 @@ dictFilter = {
 
 with open(pngPath, "r+b") as png:
     checkHeader(png)        # read the first 8 bytes of the png file, expected as b"\x89PNG\r\n\x1a\n"
+
     width, height, bitDepth, colorType, compression, filter, interlace = checkIHDR(png)
 
-    scanlines = []                                  # IDAT chunks will be decompressed and each scanline appended to this list
-    
-    if colortype != None:
-        rewriteColorType(png, colortype)
-
-    bytesPerPixel = dictBytesPerPixel[(colorType, bitDepth)]
-    scanlineSize = (width * bytesPerPixel + 1) + (redraw if redraw != None else 0) 
-    print(f"Defined size of each scan line {scanlineSize}")
-
     decompressedData, IDATChunkStart = parseIDATData(png)
-    expectedDataSize = (width * bytesPerPixel + 1) * height
 
-    print(f"{float(scanlineSize - 1)} | {(len(decompressedData) - height) / height}")
+    scanlines = extractScanlines(decompressedData)
 
-    # if float(scanlineSize - 1) != (len(decompressedData) - height) / height:
-    #     newWidth = math.ceil((scanlineSize - 1) / bytesPerPixel)
-    #     print(f"A width of {newWidth} px for the image would be recommended")
-    #     rewriteImageWidth(png, newWidth)
-
-
-    for i in range(0, len(decompressedData), width * bytesPerPixel + 1):
-        scanlines.append(decompressedData[i:i + width * bytesPerPixel + 1])
-
-    if convert:
-        # this conversion is inherently lossy. Each 4th pixel in the png file is lost permanently.
-        # It is best to only convert the image after rewriting the color type as desired, as rewriting the colortype isn't lossy
-        scanlines = convertFromRGBA(scanlines)
-        rewriteColorType(png, 2)
+    if convert != None:
+        if convert == 2:
+            scanlines = convertToRGB(scanlines)
+        elif convert == 6:
+            scanlines = convertToRGBA(scanlines)
+        rewriteColorType(png, convert)
 
     if bitwise:
         scanlines = bitwiseCorruption(scanlines, bitwise)
@@ -277,8 +295,20 @@ with open(pngPath, "r+b") as png:
 
     finalizeCorruption(scanlines)
 
-    
     print(f'Glitched: "{pngPath}" successfully')
+    printIHDRData()
+    
+
 
     # image = Image.open(png)
     # image.show()
+
+        # when conversion is desired, we calculate the scanlines FIRST based on the colorType we are converting to
+        # this means that a different amount of bytes per pixel are expected inside each scanline before the image is even converted
+        # for example: 2 to 6 means we'll be reading 4 bpp from an image that is actually 3 bpp.
+        # Because the decoder will be reading 4 bpp from the image, each 12 bytes that would correspond to 4 RGB pixels are now read as 3 RGBA pixels
+        # This condensation of the image results in a loss of height, but an interesting banding/repeating effect occurs.
+
+        # the issue of height loss is then resolved during the actual conversion process, where the 3 bpp image is padded out with an extra byte per pixel.
+        # this means that the 12 bytes are now padded to 16, meaning 4 RGB pixels are read as 4 RGBA pixels.
+        # the end result of this is that the image is left with very interesting color-banding effects.
