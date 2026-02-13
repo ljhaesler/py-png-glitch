@@ -51,6 +51,7 @@ class PNGGlitch:
 
     def __init__(self, png):
         self.png = png
+        self.baseFilters = []
         self.IHDRStart = 8
         self.IHDREnd = 33
 
@@ -138,6 +139,7 @@ class PNGGlitch:
 
         for i in range(0, lengthTotalData, bytesPerScanline):
             scanline = self.decompressedData[i:i + bytesPerScanline]
+            self.baseFilters.insert(0, scanline[0])
             del scanline[0]
 
             unfilteredData.extend(scanline)
@@ -148,15 +150,13 @@ class PNGGlitch:
         filteredData = bytearray()
         lengthUnfilteredData = len(self.unfilteredData)
         bytesPerUnfilteredScanline = self.bpp * self.width
-
-        if filter != 'random':
-            filter = int(filter)
+        if filter == 'keep':
             for i in range (0, lengthUnfilteredData, bytesPerUnfilteredScanline):
                 scanline = self.unfilteredData[i: i + bytesPerUnfilteredScanline]
-                scanline.insert(0, filter)
+                scanline.insert(0, self.baseFilters.pop())
 
                 filteredData.extend(scanline)
-        else:
+        elif filter == 'random':
             scanlines = []
 
             for i in range (0, lengthUnfilteredData, bytesPerUnfilteredScanline):
@@ -175,6 +175,13 @@ class PNGGlitch:
                     scanlines[j].insert(0, filterValue)
 
             filteredData = b''.join(scanlines)
+        else:
+            filter = int(filter)
+            for i in range (0, lengthUnfilteredData, bytesPerUnfilteredScanline):
+                scanline = self.unfilteredData[i: i + bytesPerUnfilteredScanline]
+                scanline.insert(0, filter)
+
+                filteredData.extend(scanline)
 
         self.filteredData = filteredData
 

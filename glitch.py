@@ -39,10 +39,11 @@ def checkArgs():
 
     parser.add_argument('filename')
     parser.add_argument('-f', '--filter', 
-                        choices=['0', '1', '2', '3', '4', 'random'], 
+                        choices=['0', '1', '2', '3', '4', 'random', 'keep'], 
                         required=True,
                         help="""Sets the filter type of each scanline in the PNG file the specified filter type. 
-                        The random value will select a filter at random, which can be used alongside the -s flag.""")
+                        The random value will select a filter at random, which can be used alongside the -s flag.
+                        The keep value will reapply the same filters as was on the base PNG file.""")
     parser.add_argument('-s', '--sections', 
                         type=int,
                         help="""Defines how many sections to split the PNG into, with each section having a random filter type.
