@@ -42,6 +42,19 @@ options:
 These examples were performed on the PNG Wikipedia page transparency example PNG:
 https://commons.wikimedia.org/wiki/File:PNG_transparency_demonstration_1.png
 
+The file is first converted with ffmpeg first, to ensure consistency in the results.
+
+#### Example of paeth filter corruption
+
+```
+Commands:
+
+py glitch.py files/dice_original.png -f 0 --ffmpeg
+py glitch.py files/ffmpegout.png -f 4
+```
+
+![Messy](output-examples/paeth_example.png)
+
 #### Example of messy conversion
 
 ```
