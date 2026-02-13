@@ -1,4 +1,5 @@
 import struct
+import random
 import zlib
 
 dictBytesPerPixel = {
@@ -32,7 +33,7 @@ IHDRFields = {
     "filter": 28 
 }
 
-class PNG:
+class PNGGlitch:
     IHDRStart: int
     IHDREnd: int
     width: int
@@ -143,16 +144,37 @@ class PNG:
 
         self.unfilteredData = unfilteredData
 
-    def addFilters(self, filter):
+    def addFilters(self, filter, sections):
         filteredData = bytearray()
         lengthUnfilteredData = len(self.unfilteredData)
         bytesPerUnfilteredScanline = self.bpp * self.width
 
-        for i in range (0, lengthUnfilteredData, bytesPerUnfilteredScanline):
-            scanline = self.unfilteredData[i: i + bytesPerUnfilteredScanline]
-            scanline.insert(0, filter)
+        if filter != 'random':
+            filter = int(filter)
+            for i in range (0, lengthUnfilteredData, bytesPerUnfilteredScanline):
+                scanline = self.unfilteredData[i: i + bytesPerUnfilteredScanline]
+                scanline.insert(0, filter)
 
-            filteredData.extend(scanline)
+                filteredData.extend(scanline)
+        else:
+            scanlines = []
+
+            for i in range (0, lengthUnfilteredData, bytesPerUnfilteredScanline):
+                scanline = self.unfilteredData[i: i + bytesPerUnfilteredScanline]
+                scanlines.append(scanline)
+
+            sections = sections if sections else 1
+            scanlineSections = len(scanlines) // sections
+
+            for i in range(sections):
+                filterValue = random.randint(1, 4)
+                start = i * scanlineSections
+                end = ((i + 1) * scanlineSections if i < sections - 1 else len(scanlines))
+
+                for j in range(start, end):
+                    scanlines[j].insert(0, filterValue)
+
+            filteredData = b''.join(scanlines)
 
         self.filteredData = filteredData
 
@@ -180,8 +202,8 @@ class PNG:
 
     def messyConvert(self):
         # when a messy conversion is wanted, it's important to have excess pixels/padding pixels to work with
-        # is the colortype of the original png is 2, then when attempting a messy conversion to type 6, the image will be undersized.
-        # 3 bpp cannot display 4 bpp at the same resolution
+        # if the colortype of the original png is 2, then when attempting a messy conversion to type 6, the image will be undersized.
+        # => 3 bpp cannot display 4 bpp at the same resolution
         # the simplest way around this is by padding 3 bpp to 4 bpp beforehand via convertColorType
         # then setColorType to 2 and convertColorType back to 2
         # the issue being, there are many bytes of data that remain 'unused'
@@ -251,11 +273,25 @@ class PNG:
             for i in range(len(self.unfilteredData) - 1):
                 self.unfilteredData[i] &= self.unfilteredData[i + 1]
         elif operator == "rshift":
-            for i in range(len(self.unfilteredData) - 1):
+            for i in range(len(self.unfilteredData)):
                 self.unfilteredData[i] = self.unfilteredData[i] >> 1 
         elif operator == "lshift":
-            for i in range(len(self.unfilteredData) - 1):
-                self.unfilteredData[i] = (self.unfilteredData[i] << 1) % 256
+            for i in range(len(self.unfilteredData)):
+                self.unfilteredData[i] = (self.unfilteredData[i] << 1) & 0xFF
+        elif operator == "invert":
+            for i in range(len(self.unfilteredData)):
+                self.unfilteredData[i] ^= 0xFF
+        elif operator == "swap":
+            for i in range(len(self.unfilteredData) - 3):
+                self.unfilteredData[i] = self.unfilteredData[i + 1]
+        elif operator == "noise":
+            for i in range(len(self.unfilteredData)):
+                if self.unfilteredData[i] < 32:
+                    self.unfilteredData[i] = random.randint(0, 3)
+                    # even a tiny amount of noise seems to ruin the output after filtering
+                    # some cool effects can be achieved extremely small values however
+                elif self.unfilteredData[i] > 223:
+                    self.unfilteredData[i] = random.randint(252, 255)
 
     def offsetCorrupt(self):
         scanlines = []

@@ -12,17 +12,11 @@
 
 # Changing the colortype after setting a particular filter will also modify the data in unpredictable ways
 
-
-import struct
-import zlib
-import sys
 import subprocess
-import random
 import argparse
-import math
-from PIL import Image
 
-from png import PNG
+
+from png import PNGGlitch
 
 # 01010101 &= 11111111 -> 01010101    -> preserves data
 # 01010101 &= 00000000 -> 00000000    -> wipes data
@@ -33,9 +27,9 @@ from png import PNG
 # 10101010 << 1        -> 101010100   -> data > 255, needs to be used with an & 0xFF to keep within 255
 # 01010101 >> 1        -> 00101010    -> data loss
 
-# scanline[byte] |= scanline[byte + 1]      -> seems to slowly lead to over exposure of the image (all to 11111111)
-# scanline[byte] &= scanline[byte + 1]      -> image slowly gets under-exposed, very cool effects with paeth filter
-# scanline[byte] ^= scanline[byte + 1]      -> messes around with the colours a lot, no data loss over time
+# scanline[byte] |= scanline[byte + 1]      -> seems to slowly lead to under exposure of the image (all to 11111111)
+# scanline[byte] &= scanline[byte + 1]      -> image slowly gets over-exposed, very cool effects with paeth filter
+# scanline[byte] ^= scanline[byte + 1]      -> messes around with the colours a lot, very little data loss over time
 
 
 
@@ -44,21 +38,45 @@ def checkArgs():
     parser = argparse.ArgumentParser(prog="png-glitch", description="Simple-ish tool to corrupt and mess with png files.")
 
     parser.add_argument('filename')
-    parser.add_argument('-f', '--filter', type=int)
-    parser.add_argument('-r', '--redraw', action='store_true')
-    parser.add_argument('--ffmpeg', action='store_true')
-    parser.add_argument('-b', '--bitwise', type=str)
-    parser.add_argument('-c', '--convert', type=int)
-    parser.add_argument('-m', '--messy', action='store_true')
-    parser.add_argument('-u', '--undo', action='store_true')
+    parser.add_argument('-f', '--filter', 
+                        choices=['0', '1', '2', '3', '4', 'random'], 
+                        required=True,
+                        help="""Sets the filter type of each scanline in the PNG file the specified filter type. 
+                        The random value will select a filter at random, which can be used alongside the -s flag.""")
+    parser.add_argument('-s', '--sections', 
+                        type=int,
+                        help="""Defines how many sections to split the PNG into, with each section having a random filter type.
+                        To be used alongside '-f random' only.""")
+    parser.add_argument('-r', '--redraw', 
+                        action='store_true',
+                        help="""Will redraw each pixel inside each scanline with an increasing offset.
+                        This shifts the image diagonally, which can create some nice effects alongside various filters.""")
+    parser.add_argument('--ffmpeg', 
+                        action='store_true',
+                        help="""This compresses the PNG, ensuring that each scanline is given the same filter.
+                        This can help create unique effects on the PNG, and also allow for more consistent output results.""")
+    parser.add_argument('-b', 
+                        '--bitwise', 
+                        type=str,
+                        help="""Performs various bitwise operations on the unfiltered bytes extracted from the PNG.
+                        This can create very unique effects.
+                        The supported arguments are: or, xor, and, rshift, lshift, invert, swap, noise""")
+    parser.add_argument('-c', '--convert', 
+                        type=int,
+                        help="""This argument is used to convert between PNG colortypes.
+                        It will pad/delete bytes from the unfiltered png bytes as needed.
+                        Note that if converting to a 'smaller' colortype, 
+                        the deleted byte data is deleted permanently.""")
+    parser.add_argument('-m', '--messy', 
+                        action='store_true',
+                        help="""A 'messy' conversion will create a unique scattering/offset effect on the image.
+                        This will essentially pad a colortype 2 image with extra bytes to create a colortype 6 image, 
+                        but then read it as if it were still a colortype 2 image.""")
+    parser.add_argument('-u', '--undo', 
+                        action='store_true',
+                        help="""Undoes a 'messy' conversion. Essentially performs the inverse operations as -m.""")
 
     args = parser.parse_args()
-
-    if args.filename == None:
-        raise ValueError('A path to the PNG file must be specified')
-
-    if args.filter not in [0, 1, 2, 3, 4]:
-        raise ValueError("A filter type from 0-4 must be specified.")
     
     if args.ffmpeg:
         subprocess.run(
@@ -75,14 +93,14 @@ def checkArgs():
         print(f"File written to 'files/ffmpegout.png' with requested FFmpeg filters")
         exit(0)
     
-    return (args.filename, args.filter, args.bitwise, args.convert, args.messy, args.undo, args.redraw)
+    return (args.filename, args.filter, args.bitwise, args.convert, args.messy, args.undo, args.redraw, args.sections)
 
 
 
-pngPath, requestedFilter, bitwiseOperator, convertValue, messy, undo, redraw = checkArgs()
+pngPath, requestedFilter, bitwiseOperator, convertValue, messy, undo, redraw, sections = checkArgs()
 
 with open(pngPath, "r+b") as png:
-    file = PNG(png)
+    file = PNGGlitch(png)
 
     file.start()
 
@@ -102,7 +120,7 @@ with open(pngPath, "r+b") as png:
         file.convertColorType(convertValue)
 
 
-    file.addFilters(requestedFilter)
+    file.addFilters(requestedFilter, sections)
 
     file.finish()
 
