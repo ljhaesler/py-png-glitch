@@ -51,7 +51,7 @@ py glitch.py files/dice_original.png -f 0 --ffmpeg
 py glitch.py files/ffmpegout.png -f 0 -m
 ```
 
-![Messy] (output-examples/messy_example.png)
+![Messy](output-examples/messy_example.png)
 
 #### Example of redraw corruption
 
@@ -62,7 +62,7 @@ py glitch.py files/dice_original.png -f 0 --ffmpeg
 py glitch.py files/ffmpegout.png -f 0 -r
 ```
 
-![Redraw] (output-examples/redraw_example.png)
+![Redraw](output-examples/redraw_example.png)
 
 #### Example of color type conversion
 
@@ -73,7 +73,7 @@ py glitch.py files/dice_original.png -f 0 --ffmpeg
 py glitch.py files/ffmpegout.png -f 0 -c 2
 ```
 
-![Conversion] (output-examples/convert_example.png)
+![Conversion](output-examples/convert_example.png)
 
 #### Example of a bitwise left-shift corruption
 
@@ -84,7 +84,7 @@ py glitch.py files/dice_original.png -f 0 --ffmpeg
 py glitch.py files/ffmpegout.png -f 0 -b lshift
 ```
 
-![Conversion] (output-examples/lshift_example.png)
+![Conversion](output-examples/lshift_example.png)
 
 #### Example of the average filter corruption, with conversion to color type 2
 
@@ -95,4 +95,4 @@ py glitch.py files/dice_original.png -f 0 --ffmpeg
 py glitch.py files/ffmpegout.png -f 3 -c 2
 ```
 
-![Conversion] (output-examples/avg_convert_example.png)
+![Conversion](output-examples/avg_convert_example.png)
